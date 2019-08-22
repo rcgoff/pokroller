@@ -1,7 +1,10 @@
 ;Monitor for Nicolay Pokrovsky-style controller
-;Allows RAM listing and editing by hand
+;Allows RAM listing and editing by hand, with some services:
+;auto-increment mode, listing-time current byte editor,
+;And with simple advert at startup
 
-;Leonid Yadrennikov 12.2017-02,04-05.2018
+;Leonid Yadrennikov 12.2017-05.2018
+;Latest revision Date:12.05.2018, 253 bytes length
 
 
 ;PORT1 - data LEDs
@@ -18,19 +21,37 @@
 ;81c55 on reset (every WORK/EDIT switching) is resetted to input mode,
 ;port4 bit0 - to memory mode (set to 0)
 
+;remember that F0 is local flag and not saved during int (stored in PSW),
+;and F1 is global flag.
+;More precisely, value of F0 is saved during jump into int, but if its
+;value is modified in interrupt handler, it won't be saved during RETR
 
-
-ADDRCELL        equ     80h
+ADDRCELL        equ     80h     ;here start listing address must be written
 
             ORG 00h
             en i
-;            jmp POLLSTART
-            jmp MOVELED         ;show start-up advert
+            jmp MOVELED         ;show startup advert, jmp to basic loop here
 
-
-            ORG 03h             ;interrupt handler - RAM lister
+            ORG 03h             ;/INT interrupt handler - RAM lister
 INTPOINT:   jni intpoint
-            sel rb1
+            jmp inthand
+
+;***********************************
+;Timer interrupt handler
+;***********************************
+;probably, /INT interrupt must be disabled during TMRINIT explicitly
+;but I cant imagine negative implications of this point (/INT during TMRINIT)
+            ORG 07h             ;timer interrupt handler - blinking
+            cpl f1
+TMRINIT:    mov r2,a            ;acc back-up
+            mov a,#0D0h
+            mov t,a
+            mov a,r2            ;acc restore
+            strt t
+            retr
+;***********************************end of timer int handler
+
+INTHAND:    sel rb1
             mov r2,a            ;saved user prog's ACC value
             mov a,t
             mov r7,a            ;save timer's value
@@ -59,9 +80,11 @@ EXIT:       call delayno          ;debounce to prevent re-enter to interrupt
             mov a,r2            ;restore user's ACC value
             mov a,r7
             mov t,a             ;restore timer value
+            en i
             jf0 trestore        ;t0=1 means autincr mode and timer is running
             retr
-TRESTORE:   strt t             ;so we must start it in return
+TRESTORE:   en tcnti
+            strt t             ;so we must start it in return
             retr
 
 TESTUP:     call delayno          ;debounce
@@ -95,13 +118,15 @@ RELSDWN:    jt1 relsdwn         ;wait for both buttons release
             movd p4,a           ;set 81c55 as port
             mov a,r1
             outl p2,a           ;lit current addres back at P2
-DARK:       anl p1,#00h         ;let data to blink a little:...
-            mov r4,#DRKLOOPAD
-            call delaytm        ;..at 1st,switch p1 off...
-SHINE:      mov r4,#LITLOOPAD
-            call delaytm        ;...then lit data from switches up...
-            jmp dark            ;...and switch off again in loop
 
+            call TMRINIT
+            en tcnti
+EDITLOOP:   dis i               ;this for returning from timer interrupt...
+                                ;...handler, where RETR command enables...
+                                ;...all interrupts. That lead to conflict
+            jf1 LITLOOP
+DARK:       anl p1,#00h         ;let data to blink a little:...
+            jmp DRKLOOP
 LITLOOP:    dec r0              ;addr of DATA SW port at 81c55
             movx a,@r0          ;read addr 02h - data switches,
             outl p1,a           ;lit data up,
@@ -111,20 +136,12 @@ DRKLOOP:    movx a,@r0          ;read WR switch
             jb5 editwrexit      ;pressing WR causes write and exit
             jt0 editjexit       ;pressing UP causes exit on curr.addr
             jt1 editsee         ;holding DOWN causes display of old data
-            jmp tmrret
+            jmp EDITLOOP
 
-EDITWREXIT: stop tcnt           ;because of asyncro exiting from delay
-            mov a,psw
-            dec a
-            mov psw,a           ;stack skip (quasi-return from delay)
-            call memwr          ;now we can write r3@r1 to RAM
+EDITWREXIT: call memwr          ;now we can write r3@r1 to RAM
             jmp viewloop
 
-EDITJEXIT:  stop tcnt           ;because of asyncro exiting from delay
-            call delayno        ;debounce
-            mov a,psw
-            dec a
-            mov psw,a           ;stack skip (quasi-return from delay)
+EDITJEXIT:  call delayno        ;debounce
             clr a
             movd p4,a           ;set 81c55 as MEMORY
             mov a,r1            ;restore address in acc
@@ -133,56 +150,62 @@ EDITJEXIT:  stop tcnt           ;because of asyncro exiting from delay
 EDITSEE:    mov a,r6
             outl p1,a
             jt1 editsee
-            jmp tmrret          ;in this case don't exiting from delay
+            jmp EDITLOOP        ;in this case don't exiting from EDIT
 
 
 ;*********************************************
-;moving string during start of poll mode
+;moving line during start of poll mode
 ;just for visual effects
 ;shifting 3 bytes, showing only 2nd and 3rd
 ;pattern is stored at lowest (non-showing) byte
 ;*********************************************
 
-MOVELED: ; mov r0,#(5+16)d       ;length of pattern+length of two ports
-;          mov r1,#00011111b     ;the right 5 bits is pattern
-;         clr a
-;          mov r2,a
-;          mov r3,a
-;          mov r7,#11111110b     ;delay value (greater->faster, timer counts
-;                                ;upward)
-;STDLOOP:  mov a,r2
-;          outl p1,a
-;          mov a,r3
-;          outl p2,a
-;          call DELAYVAL
-;          call THREESFT         ;three-byte shift
-;          djnz r0,STDLOOP
-          jmp POLLSTART         ;pollstart is ADDR/DATA sw handler
-
+MOVELED:    mov r0,#(5+16)d     ;length of pattern+length of two ports
+            mov r5,#00011111b   ;the right 5 bits is pattern
+            clr a
+            mov r6,a
+            mov r7,a
+;            mov r2,#11111110b   ;delay value (greater->faster, timer counts
+;                                ;upward) for old version, timer-based delay
+STDLOOP:    mov a,r6
+            outl p1,a
+            mov a,r7
+            outl p2,a
+            mov r2,#95d
+SFTDEL:     djnz r2,sftdel      ;one-loop delay(full-byte loop is too slow)
+;            call THREESFT       ;three-byte shift
+;instead of call jump is used to save 1 byte
 
 ;*********************************************
 ;Three-byte cyclic shifting
-;r1,r2,r3 stores lower,medium,upper bytes
+;r5,r6,r7 stores lower,medium,upper bytes
 ;acc value is preserved
 ;*********************************************
 
-THREESFT:  xch a,r1             ;now r1 stores previous a, a<--lower byte
-           rrc a                ; shifting lower byte
-           xch a,r2             ;r2<--lower-shifted, a<--medium
-           rrc a                ; shifting medium byte
-           xch a,r3             ;r3<--medium-shifted, a<--upper
-           rrc a                ; shifting upper byte
-                                ;now r2=lower-s,r3=med-s,a=up-s
-           xch a,r3             ;now r2=lower-s,r3=up-s, a=med-s
-           xch a,r2             ;now a=lower-s,r2=med-s,r3=up-s                                ;
-           anl a,#7fh           ;setting MSB (higher byte) to 0 and...
-           jc SET1              ;..then seeting to 1 if was carry from upper
-COMMPART:  xch a,r1             ;a<--previous a, r1<--lower-shifted
-                                ;now r1=lower,r2=medium,r3=up,a=old acc
-           ret
-SET1:      orl a,#80h           ;setting Acc's LSB to 1 if Carry=1
-           clr c
-           jmp  COMMPART
+THREESFT:   xch a,r5            ;now r5 stores previous a, a<--lower byte
+            rrc a               ; shifting lower byte
+            xch a,r6            ;r6<--lower-shifted, a<--medium
+            rrc a               ; shifting medium byte
+            xch a,r7            ;r7<--medium-shifted, a<--upper
+            rrc a               ; shifting upper byte
+                                ;now r6=lower-s,r7=med-s,a=up-s
+            xch a,r7            ;now r6=lower-s,r7=up-s, a=med-s
+            xch a,r6            ;now a=lower-s,r6=med-s,r3=up-s                                ;
+            anl a,#7fh          ;setting MSB (higher byte) to 0 and...
+            jc SET1             ;..then seeting to 1 if was carry from upper
+COMMPART:   xch a,r5            ;a<--previous a, r5<--lower-shifted
+                                ;now r5=lower,r6=medium,r7=up,a=old acc
+            jmp SDLPCONT        ;instead of ret:StandarD LooP CONTinuation
+SET1:       orl a,#80h          ;setting Acc's LSB to 1 if Carry=1
+            clr c
+            jmp  COMMPART
+;*****************************end of THREESFT
+
+SDLPCONT:   djnz r0,STDLOOP
+;            ret                 ;instead of "CALL MOVELED" and "RET",...
+            jf0 POLLBLIK        ;...to save bytes, cond.jmp is used, ...
+            jmp POLLSTART       ;...depending on two cases of MOVELED usage,
+                                ;f0=1 means autoincrement ON
 
 
 ;*********************************************
@@ -199,32 +222,26 @@ AUTINC:
 ;and WR button
 ;every WR pressing causes not just writing but also address incr
 ;to indicate this mode ADDRESS (port2) must blink
-           call delayno         ;debounce
-           cpl f0               ;toggle autoincr (f0=1 -  autoincr ON)
-           jf0 POLLBLIK         ;autoincr on - handle blinking
-           jmp readloop         ;if autoincr now off, just return to simple
+            call delayno        ;debounce
+            cpl f0              ;toggle autoincr (f0=1 -  autoincr ON)
+            jf0 POLLBLIKD       ;autoincr on - handle blinking
+            jmp readloop        ;if autoincr now off, just return to simple
                                 ;polling mode
-
-;autoincr blinking may be done like EDIT mode:
-;lighting phase and blind phase, both inside delay routine
-;maybe alternative variant:
-
-POLLBLIK:   mov r4, #RDLOOPAD
-            call DELAYTM         ;run READLOOP inside delay
-            cpl f1               ;f1 selects blind/light phase
-            jmp POLLBLIK
+POLLBLIKD:  mov a,r1
+            jz moveled          ;to indicate autoincr on when curr address=0
+POLLBLIK:   call TMRINIT        ;autoincr blinking initialize
+            en tcnti
+            jmp READLOOP
 
 ;in this case, standard poll routine must distingush
 ;--normal call(f0,f1 both off)
 ;--autoincr light (f0 on, f1 on)
 ;--autoincr dark (f0 on, f1 off)
 ;and must be able to switch modes from every given mode
-;loop in autoincr mode: f0=0: simple loop, f0=1:jmp to TMRRET
-;or simple jf0 tmrret
 
 ADRINC:     inc r1              ;this is end-of-polling-loop in
                                 ;autoincr mode, not a strating point
-            clr f1              ;after writing first phase always LIGHT
+            clr f1              ;after writing first phase is always LIGHT
                                 ;and go to POLLSTART in natural way
 
 ;********************************************
@@ -238,7 +255,6 @@ POLLSTART:  mov a, #01h
             movd p4,a           ;set 81c55 as port
             mov a,r1            ;restore previous address at P2 to shorten
                                 ;parasite blinking if A.0=P2.0=0 after movd
-
             outl p2,a
             jf0 POLLBLIK        ;after writing in autoincr we can't simply
                                 ;continue but must re-initialize delay at 1st
@@ -257,11 +273,8 @@ AINCSKIP:   inc r0
             jb5 memwrpoll       ;did button pressed? (if pressed, A.5=PC.5=1)
             jt0 autinc          ;if UP pressed - toggle normal/auto-increment
                                 ;no buttons - continue polling
-                                ;two cases:
-            jf0 tmrret          ;auto-incr mode - return into delay
-            jmp readloop        ;std mode - simple loop
-MEMWRPOLL:  jf0 sksp            ;in autoincr we're inside delay, special exit
-MEMWRAINC:  call memwr
+            jmp readloop        ;return to standard loop
+MEMWRPOLL:  call memwr
             jf0 adrinc          ;if auto-incr,modify address
             jmp pollstart       ;after memory writing, jmp to init-and-poll
 
@@ -271,15 +284,6 @@ ADRSKIP:    jf1 p1dark          ;in DARK phase P1 must be switched off
             JMP adrnorm         ;if light phase,just return back
 P1DARK:     anl p2,#0h          ;if dark phase, switch off p2
             jmp aincskip
-
-;delay exiting
-;exiting from READLOOP by pressing WR must leave DELAY routine!
-;and STOP timer!
-SKSP:       stop tcnt
-            mov a,psw
-            dec a
-            mov psw,a
-            jmp memwrainc
 
 
 ;**************************************
@@ -304,40 +308,26 @@ MEMWR:      movx a,@r0
 
 ;**************************************************************************
 ;timer-delay subroutine
-;uses r5 (internally) and r4 as input data (or internally)
-;and r7 as delay length (or internally)
-;with doing something else during delay call DELAYTM
+;and r7 as delay length (and/or internally), its value is destroyed
 ;with explicit delay time call DELAYVAL
-;with explicit time and doing something call DELAY
-;address of "something else" must be at r4 and return to TMRRET must occur
-;if nothing to do, r4 must contain TMRRET address, then call DELAYNO
+;in general case call DELAYNO
 ;**************************************************************************
 
-DELAYTM:    mov r7,#0D0h
-            jmp DELAY
-DELAYNO:    mov r7,#0D0h       ;tmr-delay value equivalent to 03h...
-                               ;;...in dbl-loop delay
-DELAYVAL:   mov r4,#TMRRETAD
-DELAY:      xch a,r5           ;acc back-up
-            mov a,r7
-            mov t,a
-            strt t
-TMRLOOP:    jtf tmrexit
-            mov a,r4
-            jmpp @a
-TMRRET:     jmp tmrloop
-TMREXIT:    stop tcnt
-            xch a,r5
-            ret
-
-
-;addresses for JMPP @A command
-TMRRETAD:   DB TMRRET
-LITLOOPAD:  DB LITLOOP
-DRKLOOPAD:  DB DRKLOOP
-;POLLOOPAD:  DB POLLSTART
-RDLOOPAD:   DB READLOOP
-
+;DELAYNO:    mov r7,#0D0h       ;tmr-delay value equivalent to 03h...
+;                               ;;...in dbl-loop delay
+;DELAYVAL:   dis tcnti
+;            stop tcnt
+;            jtf DELAYVAL       ;clear T-flag to prevent...
+;                               ;...conflict with timer interrupt (even in
+;                               ;stopped timer & disabled INTs flag m.b. set)
+;            xch a,r7           ;acc back-up and delay length load
+;            mov t,a
+;            strt t
+;TMRLOOP:    jtf tmrexit
+;            jmp tmrloop
+;TMREXIT:    stop tcnt
+;            xch a,r7           ;acc restore
+;            ret
 
 ;obsolete
 ;The drawback of this approach is different delay time
@@ -357,7 +347,15 @@ RDLOOPAD:   DB READLOOP
 ;            xch a,r5
 ;            ret
 
+
+;very obsolete (1st version)
+;delay subroutine
+DELAYNO:    mov r7,#03h
+DELAYVAL:   mov r6,#00h
+INNER:      djnz r6,INNER
+            djnz r7,DELAYVAL
+            ret
+
 ;author and firmware info out of stand's ROM address space
             ORG 100h
-            DB '02-05-18 Nicolay Pokrovsky-style stand by Leonid Yadrennikov'
-
+            DB '12-05-18 Nicolay Pokrovsky stand by Leonid Yadrennikov,below RAR'
