@@ -1,14 +1,14 @@
 ;Monitor for Nicolay Pokrovsky-style controller
 ;Allows RAM listing and editing by hand
 
-;Leonid Yadrennikov december 2017
+;Leonid Yadrennikov 12.2017-02.2018
 
 
 ;PORT1 - data LEDs
 ;PORT2 - address LEDs
 ;PORT4 bit 0 - IO//M of 81c55 (0=memory, 1=i/o)
 ;\INT - jump to listing mode and exit from listing mode
-;       start address for listing is stored in 81c55 RAM at FFh
+;       start address for listing is stored in 81c55 RAM at ADDRCELL
 ;T0 - list forward
 ;T1 - list backward
 ;81c55 PORTA (addr 01h) - address switches
@@ -20,6 +20,8 @@
 
 
 
+ADDRCELL        equ     80h
+
             ORG 00h
             en i
             jmp POLLSTART       ;pollstart is ADDR/DATA sw handler
@@ -30,30 +32,65 @@ INTPOINT:   jni intpoint
             sel rb1
             mov r2,a            ;saved user prog's ACC value
             call delay          ;debounce
-            mov r1, #80h        ;address of start address' value in RAM
+            mov r1, #ADDRCELL   ;address of start address' value in RAM
             clr a
             movd p4,a           ;set 81c55 as RAM
             movx a, @r1         ;read start listing address
-            mov r0,a            ;save it to r0
+EDITRET:    mov r0,a            ;save it to r0 -point to return from editing
 VIEWLOOP:   ;swap a             ;SWAP only for controllers with 4 LEDS on P2
             outl p2,a           ;lit up ADDRESS
             movx a,@r0          ;read data
             outl p1,a           ;lit up DATA
-WAITLOOP:   jt0 memup
-            jt1 memdown         ;if T0,T1 tied to Vcc here must be jnt0,jnt1
+WAITLOOP:   jt0 testup
+            jt1 testdown        ;if T0,T1 tied to Vcc here must be jnt0,jnt1
             jni exit
             jmp waitloop
-MEMUP:      inc r0              ;now new address is in ACC and r0
+MEMUP:      clr f0
+            inc r0              ;now new address is in ACC and r0
             jmp memcom
 MEMDOWN:    dec r0
 MEMCOM:     mov a,r0
-            call delay          ;debounce
             jmp viewloop
 EXIT:       call delay          ;debounce to prevent re-enter to interrupt
             mov a,#01h
             movd p4,a           ;set 81c55 as ports
             mov a,r2            ;restore user's ACC value
             retr
+
+TESTUP:     call delay          ;debounce
+            jt1 both            ;is down button pressed? yes - they're both
+            jmp memup           ;no - only up
+
+TESTDOWN:   call delay          ;debounce
+            jt0 both            ;is up button pressed? yes - they're both
+            jmp memdown         ;no - only down
+
+BOTH:
+                                ;now r0 has current address, r1 - start addr,
+                                ;r2 - user prog's acc value,
+                                ;and a stores data from curr.addr
+            mov a,r0
+            mov r3,a            ;save current address at r3 for later
+            mov a,#01h
+            movd p4,a           ;set 81c55 as port
+            mov a,r0
+            outl p2,a           ;lit current addres back at P2
+            mov r1,#02h
+            mov r0,#03h
+BLINK:      movx a,@r1          ;read addr 02h - data switches
+            call delay          ;let switches data..
+            anl p1,#00h         ;..to blink a little
+            call delay
+            outl p1,a
+            movx a,@r0          ;read WR switch
+            jb5 editexit
+            jni editexit        ;pressing INT or WR exits edit mode
+            jmp blink
+
+EDITEXIT:   clr a
+            movd p4,a           ;switch back to memory mode
+            mov a,r3            ;restore current address
+            jmp editret
 
 
 ;address/data switches polling
@@ -95,7 +132,6 @@ MEMWR:      movx a,@r0
 
 
 ;delay subroutine
-            ORG 60h
 DELAY:      mov r6,#03h
 OUTTER:     mov r7,#0ffh
 INNER:      djnz r7,INNER
@@ -103,4 +139,4 @@ INNER:      djnz r7,INNER
             ret
 
             ORG 100h
-            DB '30-12-17 Nicolay Pokrovsky-style stand by Leonid Yadrennikov'
+            DB '04-02-18 Nicolay Pokrovsky-style stand by Leonid Yadrennikov'
