@@ -1,0 +1,61 @@
+8048 Assembler           Version 2.08   10/03/119 14:24:59    Page 1
+lister.ASM
+
+
+
+    1 0000              ;RAM lister for Blue Pokroller
+    2 0000              ;L.Yadrennikov 16.09,03.10.2019
+    3 0000              ;to be burned in single 155RE3 (32x8 PROM)
+    4 0000              
+    5 0000              ;r1 holds initial address
+    6 0000              ;r0 stores current address
+    7 0000              ;r3 is inner delay variable
+    8 0000              ;r2 is outter delay variable
+    9 0000              
+   10 0000              ;t0 lists upwards
+   11 0000              ;t1 lists downwards
+   12 0000              
+   13 0000              STARTADDR       equ     0ffh            ;address in RAM where starting address
+   14 0000                                                      ;for listing is stored
+   15 0000              DELVAL          equ     0B0h            ;debouncing delay value
+   16 0000              
+   17 0100              ORG     100h
+   18 0100 B9FF                 mov r1,#STARTADDR
+   19 0102 81                   movx a,@r1              ;read start addr
+   20 0103 A8                   mov r0,a                ;place it to r0
+   21 0104              VIEWLOOP:
+   22 0104 47                   swap a
+   23 0105 3A                   outl p2,a               ;out addr
+   24 0106 9AFE                 anl p2,#11111110b       ;force P2.0/A8 to 0 to provide /CS RAM
+   25 0108 80                   movx a,@r0              ;read data @addr
+   26 0109 39                   outl p1,a               ;out data
+   27 010A              WAITLOOP:
+   28 010A 2610                 jnt0 MEMUP
+   29 010C 4613                 jnt1 MEMDOWN
+   30 010E 240A                 jmp WAITLOOP
+   31 0110 18           MEMUP:  inc r0
+   32 0111 2414                 jmp MEMCOM
+   33 0113 C8           MEMDOWN:dec r0
+   34 0114 F8           MEMCOM: mov a,r0
+   35 0115 3419                 call BOUNCDLY
+   36 0117 2404                 jmp VIEWLOOP
+   37 0119              
+   38 0119              
+   39 0119              BOUNCDLY:
+   40 0119 BAB0                 mov r2,#DELVAL
+   41 011B EB1B         INNER:  djnz r3,inner
+   42 011D EA1B                 djnz r2,inner
+   43 011F 83                   ret
+
+Defined Symbols:
+  DELVAL                                    0000B0  176
+  STARTADDR                                 0000FF  255
+
+Defined Labels:
+  BOUNCDLY                                  000119  281
+  INNER                                     00011B  283
+  MEMCOM                                    000114  276
+  MEMDOWN                                   000113  275
+  MEMUP                                     000110  272
+  VIEWLOOP                                  000104  260
+  WAITLOOP                                  00010A  266

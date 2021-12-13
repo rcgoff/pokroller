@@ -1,0 +1,28 @@
+PAL16L8					PAL DESIGN SPECIFICATION
+RE3v7					LEONID YADRENNIKOV 09.10.2019
+CS maker and latch for POKROLLER
+RT labs
+SW3 /PSEN ALE A8 AD4 AD3 AD2 AD1 AD0 GND WORK CSROM A4 A3 A2 A1 A0 CSRAM CS2 VCC
+
+/A0=ALE*/AD0 + /ALE*/A0 + /AD0*/A0
+/A1=ALE*/AD1 + /ALE*/A1 + /AD1*/A1
+/A2=ALE*/AD2 + /ALE*/A2 + /AD2*/A2
+/A3=ALE*/AD3 + /ALE*/A3 + /AD3*/A3
+/A4=ALE*/AD4 + /ALE*/A4 + /AD4*/A4
+/CSROM=PSEN*A8
+/CSRAM=ALE* A8 + /ALE*/CSRAM + /CSRAM*A8 
+/CS2= /SW3*CSRAM + WORK*SW3*CSRAM
+
+DESCRIPTION
+This version replaces ALL (!) gates in original circuit.
+ALE is output from pin 11 of 8048.
+/PSEN is output from pin 9 of 8048.
+
+CSRAM is A8 latched by ALE (ALE high - transparent, ALE low - latching-storing) and inverted. Output is active low. 
+Third therm in latches equation has taken from MMI documentation (logic racing prevention).
+CSRAM should be  leaved unconnected, and CS2 should be conected directly to 537RU8 pin 20 (/CS2).
+
+SW3 is "write" switch (connected to pin 21 w/r of RU8).
+WORK is WORK-/INPUT switch signal.
+
+CSROM drives /CS input of 155RE3 (open collecrtor) or 1608RT1 (tri-state) directly.
